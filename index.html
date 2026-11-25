@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VN30 State Explorer – Prototype NCKH</title>
+  <meta name="description" content="Prototype web minh họa quy trình nạp CSV, tính biến giá – khối lượng – thanh khoản, phân cụm và hiển thị kết quả." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="logo">V30</div>
+        <div>
+          <div class="badge"><span class="pulse"></span> Prototype · dữ liệu mô phỏng</div>
+          <h1>VN30 Market State Explorer</h1>
+          <p class="sub">Nạp CSV → tính biến giá – khối lượng – thanh khoản → phân cụm → bảng &amp; hình kết quả. Bản demo phục vụ trình bày quy trình nghiên cứu, không phải hệ thống giao dịch.</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel controls">
+      <section class="control-section">
+        <div class="step-label"><span class="num">1</span> Nạp dữ liệu</div>
+        <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Chọn hoặc kéo thả file CSV">
+          <div class="icon">⇪</div>
+          <strong>Kéo thả CSV vào đây</strong>
+          <span>hoặc bấm để chọn file</span>
+        </div>
+        <input id="fileInput" type="file" accept=".csv,text/csv" class="hidden" />
+        <div id="fileMeta" class="file-meta">Chưa nạp file — đang dùng dữ liệu mẫu.</div>
+        <div class="btn-row">
+          <button id="sampleBtn" class="btn small" type="button">Dữ liệu mẫu 10×220</button>
+          <button id="downloadSampleBtn" class="btn small ghost" type="button">Tải CSV mẫu</button>
+        </div>
+        <details class="csv-help">
+          <summary>Định dạng CSV</summary>
+          <ul>
+            <li>Bắt buộc: <code>Close</code>, <code>Volume</code>.</li>
+            <li>Nên có: <code>Date</code>, <code>Ticker</code>, <code>Open</code>, <code>High</code>, <code>Low</code>, <code>Value</code>.</li>
+            <li>Hỗ trợ tiêu đề tiếng Việt: Ngày, Mã, Mở cửa, Cao nhất, Thấp nhất, Đóng cửa, Khối lượng, Giá trị.</li>
+            <li>Phân cách <code>,</code> hoặc <code>;</code>. Nếu thiếu <code>Value</code>, hệ thống dùng <code>Close × Volume</code>.</li>
+          </ul>
+        </details>
+        <details class="csv-help">
+          <summary>Biến &amp; mô hình</summary>
+          <ul>
+            <li>8 biến: Drift, Vol, Range, CLV, VolZ (60 phiên), ILLIQ, CMF, OBV slope.</li>
+            <li>Chuẩn hóa z-score toàn bộ cửa sổ; phân cụm K-means với k-means++ và nhiều lần khởi tạo.</li>
+            <li>K chọn tay hoặc tự động theo silhouette; nhãn cụm chỉ là heuristic minh họa.</li>
+          </ul>
+        </details>
+      </section>
+
+      <section class="control-section">
+        <div class="step-label"><span class="num">2</span> Tham số</div>
+        <div class="field-grid">
+          <div class="field">
+            <label for="WInput">Cửa sổ W (phiên)</label>
+            <input id="WInput" type="number" min="5" max="120" step="1" value="20" />
+          </div>
+          <div class="field">
+            <label for="stepInput">Bước trượt</label>
+            <input id="stepInput" type="number" min="1" max="30" step="1" value="1" />
+          </div>
+        </div>
+        <div class="field" style="margin-top:10px">
+          <label for="kSelect">Số cụm K</label>
+          <select id="kSelect">
+            <option value="2">2 cụm</option>
+            <option value="3" selected>3 cụm</option>
+            <option value="4">4 cụm</option>
+            <option value="5">5 cụm</option>
+            <option value="6">6 cụm</option>
+            <option value="auto">Tự động (silhouette)</option>
+          </select>
+        </div>
+        <button id="runBtn" class="btn primary run-btn" type="button">Chạy phân tích</button>
+        <div id="status" class="status">Sẵn sàng. Dữ liệu mẫu sẽ được nạp tự động.</div>
+      </section>
+    </aside>
+
+    <section class="content">
+      <div id="emptyState" class="card hidden">
+        <h2>Chưa có kết quả</h2>
+        <p class="hint">Nạp CSV hoặc bấm “Dùng dữ liệu mẫu” để bắt đầu.</p>
+      </div>
+
+      <div id="results" class="content">
+        <div class="kpis">
+          <div class="kpi">
+            <div class="k">Cửa sổ quan sát</div>
+            <div id="kpiWindows" class="v">—</div>
+            <div class="h">số quan sát hợp lệ</div>
+          </div>
+          <div class="kpi">
+            <div class="k">Mã / chuỗi</div>
+            <div id="kpiTickers" class="v">—</div>
+            <div class="h">được đưa vào phân tích</div>
+          </div>
+          <div class="kpi">
+            <div class="k">Số cụm</div>
+            <div id="kpiK" class="v">—</div>
+            <div class="h">K đang sử dụng</div>
+          </div>
+          <div class="kpi">
+            <div class="k">Silhouette</div>
+            <div id="kpiSil" class="v">—</div>
+            <div class="h">càng gần 1 càng tách biệt</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Tổng quan cụm</h2>
+              <p class="hint">Giá trị trung bình của biến trong từng cụm; R20 là lợi suất 20 phiên sau (chỉ minh họa).</p>
+            </div>
+            <div id="legend" class="legend"></div>
+          </div>
+          <div class="meta-line" id="metaLine">—</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cụm</th>
+                  <th class="num">n</th>
+                  <th class="num">Tỷ lệ</th>
+                  <th class="num">Drift</th>
+                  <th class="num">Vol</th>
+                  <th class="num">CLV</th>
+                  <th class="num">CMF</th>
+                  <th class="num">ILLIQ</th>
+                  <th class="num">R20</th>
+                  <th>Gợi ý (minh họa)</th>
+                </tr>
+              </thead>
+              <tbody id="summaryBody"></tbody>
+            </table>
+          </div>
+          <p class="note" id="summaryNote"><strong>Lưu ý:</strong> nhãn “tương thích” chỉ là heuristic theo thứ hạng CLV và VolZ, không phải kết luận nghiên cứu và không xác định danh tính dòng tiền. Trên màn hình hẹp, vuốt ngang bảng để xem đủ cột.</p>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h2>Giá và cụm theo thời gian</h2>
+                <p class="hint">Mỗi điểm là một cửa sổ kết thúc tại phiên đó.</p>
+              </div>
+              <div class="controls-inline">
+                <select id="tickerSelect" aria-label="Chọn mã"></select>
+              </div>
+            </div>
+            <div id="priceChart" class="chart-wrap"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h2>Không gian đặc trưng</h2>
+                <p class="hint">Chọn hai biến để xem phân bố điểm theo cụm.</p>
+              </div>
+              <div class="controls-inline">
+                <select id="scatterX" aria-label="Trục X"></select>
+                <select id="scatterY" aria-label="Trục Y"></select>
+              </div>
+            </div>
+            <div id="scatterChart" class="chart-wrap"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Kiểm chứng hậu nghiệm (mô phỏng)</h2>
+              <p class="hint">Trung bình lợi suất 20 phiên sau theo cụm, tính trực tiếp trên file đã nạp.</p>
+            </div>
+          </div>
+          <div id="fwdChart" class="chart-wrap"></div>
+          <p class="note" id="fwdNote"><strong>Cảnh báo:</strong> đây là quan sát trong dữ liệu mô phỏng, có dùng thông tin tương lai của chính file; không phải dự báo và không phải kết quả nghiên cứu.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Bảng quan sát</h2>
+              <p class="hint" id="obsCount">—</p>
+            </div>
+            <div class="controls-inline">
+              <select id="obsFilter" aria-label="Lọc theo cụm"></select>
+              <button id="exportBtn" class="btn small" type="button">Tải CSV kết quả</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ngày</th>
+                  <th>Mã</th>
+                  <th class="num">Close</th>
+                  <th class="num">Drift</th>
+                  <th class="num">Vol</th>
+                  <th class="num">CLV</th>
+                  <th class="num">VolZ</th>
+                  <th class="num">CMF</th>
+                  <th>Cụm</th>
+                </tr>
+              </thead>
+              <tbody id="obsBody"></tbody>
+            </table>
+          </div>
+          <p class="note">Hiển thị tối đa 60 dòng đầu theo bộ lọc. Tải CSV để xem toàn bộ cửa sổ và biến đã chuẩn hóa/không chuẩn hóa. Trên màn hình hẹp, vuốt ngang bảng để xem đủ cột.</p>
+        </div>
+
+        <div class="disclaimer">
+          <strong>Giới hạn của prototype.</strong> Dữ liệu mẫu được sinh giả lập, không phải giá thật. Công cụ chỉ minh họa quy trình: nạp dữ liệu, tính biến, phân cụm và hiển thị kết quả. Kết quả phụ thuộc mạnh vào tham số, cách chuẩn hóa và dữ liệu đầu vào. Không sử dụng để đưa ra khuyến nghị đầu tư; không kết luận về “dòng tiền lớn” khi chỉ có OHLCV.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>NCKH · Nhận diện trạng thái giá – khối lượng – thanh khoản trên VN30</span>
+    <span>Prototype tĩnh · chạy hoàn toàn trong trình duyệt</span>
+  </footer>
+
+  <script src="core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
